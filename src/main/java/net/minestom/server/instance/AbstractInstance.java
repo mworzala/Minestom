@@ -1,0 +1,644 @@
+package net.minestom.server.instance;
+
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import net.kyori.adventure.identity.Identity;
+import net.kyori.adventure.pointer.Pointers;
+import net.minestom.server.MinecraftServer;
+import net.minestom.server.Tickable;
+import net.minestom.server.UpdateManager;
+import net.minestom.server.adventure.audience.PacketGroupingAudience;
+import net.minestom.server.coordinate.Point;
+import net.minestom.server.coordinate.Pos;
+import net.minestom.server.data.Data;
+import net.minestom.server.entity.Entity;
+import net.minestom.server.entity.EntityCreature;
+import net.minestom.server.entity.ExperienceOrb;
+import net.minestom.server.entity.Player;
+import net.minestom.server.entity.pathfinding.PFInstanceSpace;
+import net.minestom.server.event.EventDispatcher;
+import net.minestom.server.event.GlobalHandles;
+import net.minestom.server.event.instance.AddEntityToInstanceEvent;
+import net.minestom.server.event.instance.InstanceTickEvent;
+import net.minestom.server.event.instance.RemoveEntityFromInstanceEvent;
+import net.minestom.server.instance.block.*;
+import net.minestom.server.network.packet.server.play.BlockActionPacket;
+import net.minestom.server.network.packet.server.play.TimeUpdatePacket;
+import net.minestom.server.tag.Tag;
+import net.minestom.server.tag.TagHandler;
+import net.minestom.server.thread.ThreadProvider;
+import net.minestom.server.utils.PacketUtils;
+import net.minestom.server.utils.chunk.ChunkUtils;
+import net.minestom.server.utils.entity.EntityUtils;
+import net.minestom.server.utils.time.Cooldown;
+import net.minestom.server.utils.time.TimeUnit;
+import net.minestom.server.utils.validate.Check;
+import net.minestom.server.world.DimensionType;
+import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jglrxavpok.hephaistos.nbt.NBTCompound;
+
+import java.time.Duration;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Consumer;
+
+/**
+ * Instances are what are called "worlds" in Minecraft, you can add an entity in it using {@link Entity#setInstance(Instance)}.
+ * <p>
+ * An instance has entities and chunks, each instance contains its own entity list but the
+ * chunk implementation has to be defined, see {@link InstanceContainer}.
+ * <p>
+ * WARNING: when making your own implementation registering the instance manually is required
+ * with {@link InstanceManager#registerInstance(Instance)}, and
+ * you need to be sure to signal the {@link UpdateManager} of the changes using
+ * {@link UpdateManager#signalChunkLoad(Chunk)} and {@link UpdateManager#signalChunkUnload(Chunk)}.
+ */
+public abstract class AbstractInstance implements Instance {
+
+    protected static final BlockManager BLOCK_MANAGER = MinecraftServer.getBlockManager();
+    protected static final UpdateManager UPDATE_MANAGER = MinecraftServer.getUpdateManager();
+
+    private boolean registered;
+
+    private final DimensionType dimensionType;
+
+    private final WorldBorder worldBorder;
+
+    // Tick since the creation of the instance
+    private long worldAge;
+
+    // The time of the instance
+    private long time;
+    private int timeRate = 1;
+    private Duration timeUpdate = Duration.of(1, TimeUnit.SECOND);
+    private long lastTimeUpdate;
+
+    // Field for tick events
+    private long lastTickAge = System.currentTimeMillis();
+
+    // Entities present in this instance
+    protected final Set<Entity> entities = ConcurrentHashMap.newKeySet();
+    protected final Set<Player> players = ConcurrentHashMap.newKeySet();
+    protected final Set<EntityCreature> creatures = ConcurrentHashMap.newKeySet();
+    protected final Set<ExperienceOrb> experienceOrbs = ConcurrentHashMap.newKeySet();
+    // Entities per chunk
+    protected final Object entitiesLock = new Object(); // Lock used to prevent the entities Set and Map to be subject to race condition
+    protected final Long2ObjectMap<Set<Entity>> chunkEntities = new Long2ObjectOpenHashMap<>();
+
+    // the uuid of this instance
+    protected UUID uniqueId;
+
+    // list of scheduled tasks to be executed during the next instance tick
+    protected final Queue<Consumer<Instance>> nextTick = new ConcurrentLinkedQueue<>();
+
+    // instance custom data
+    private final Object nbtLock = new Object();
+    private final NBTCompound nbt = new NBTCompound();
+
+    // the explosion supplier
+    private ExplosionSupplier explosionSupplier;
+
+    // Pathfinder
+    private final PFInstanceSpace instanceSpace = new PFInstanceSpace(this);
+
+    // Adventure
+    private final Pointers pointers;
+
+    /**
+     * Creates a new instance.
+     *
+     * @param uniqueId      the {@link UUID} of the instance
+     * @param dimensionType the {@link DimensionType} of the instance
+     */
+    public AbstractInstance(@NotNull UUID uniqueId, @NotNull DimensionType dimensionType) {
+        Check.argCondition(!dimensionType.isRegistered(),
+                "The dimension " + dimensionType.getName() + " is not registered! Please use DimensionTypeManager#addDimension");
+        this.uniqueId = uniqueId;
+        this.dimensionType = dimensionType;
+
+        this.worldBorder = new WorldBorder(this);
+
+        this.pointers = Pointers.builder()
+                .withDynamic(Identity.UUID, this::getUniqueId)
+                .build();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @param callback the task to execute during the next instance tick
+     */
+    @Override
+    public void scheduleNextTick(@NotNull Consumer<Instance> callback) {
+        this.nextTick.add(callback);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return true if the instance has been registered
+     */
+    @Override
+    public boolean isRegistered() {
+        return registered;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @param registered true to mark the instance as registered
+     */
+    @Override
+    public void setRegistered(boolean registered) {
+        this.registered = registered;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return the dimension of the instance
+     */
+    @Override
+    public DimensionType getDimensionType() {
+        return dimensionType;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return the age of this instance in tick
+     */
+    @Override
+    public long getWorldAge() {
+        return worldAge;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return the time in the instance
+     */
+    @Override
+    public long getTime() {
+        return time;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @param time the new time of the instance
+     */
+    @Override
+    public void setTime(long time) {
+        this.time = time;
+        PacketUtils.sendGroupedPacket(getPlayers(), createTimePacket());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return the time rate of the instance
+     */
+    @Override
+    public int getTimeRate() {
+        return timeRate;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @param timeRate the new time rate of the instance
+     * @throws IllegalStateException if {@code timeRate} is lower than 0
+     */
+    @Override
+    public void setTimeRate(int timeRate) {
+        Check.stateCondition(timeRate < 0, "The time rate cannot be lower than 0");
+        this.timeRate = timeRate;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return the client update rate for time related packet
+     */
+    @Override
+    public @Nullable Duration getTimeUpdate() {
+        return timeUpdate;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @param timeUpdate the new update rate concerning time
+     */
+    @Override
+    public void setTimeUpdate(@Nullable Duration timeUpdate) {
+        this.timeUpdate = timeUpdate;
+    }
+
+    /**
+     * Creates a {@link TimeUpdatePacket} with the current age and time of this instance
+     *
+     * @return the {@link TimeUpdatePacket} with this instance data
+     */
+    private @NotNull TimeUpdatePacket createTimePacket() {
+        long time = this.time;
+        if (timeRate == 0) {
+            //Negative values stop the sun and moon from moving
+            //0 as a long cannot be negative
+            time = time == 0 ? -24000L : -Math.abs(time);
+        }
+        return new TimeUpdatePacket(worldAge, time);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return the {@link WorldBorder} linked to the instance
+     */
+    @Override
+    public @NotNull WorldBorder getWorldBorder() {
+        return worldBorder;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return an unmodifiable {@link Set} containing all the entities in the instance
+     */
+    @Override
+    public @NotNull Set<@NotNull Entity> getEntities() {
+        return Collections.unmodifiableSet(entities);
+    }
+
+    /**
+     * Gets the players in the instance;
+     *
+     * @return an unmodifiable {@link Set} containing all the players in the instance
+     */
+    @Override
+    public @NotNull Set<@NotNull Player> getPlayers() {
+        return Collections.unmodifiableSet(players);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return an unmodifiable {@link Set} containing all the creatures in the instance
+     */
+    @Override
+    public @NotNull Set<@NotNull EntityCreature> getCreatures() {
+        return Collections.unmodifiableSet(creatures);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return an unmodifiable {@link Set} containing all the experience orbs in the instance
+     */
+    @Override
+    public @NotNull Set<@NotNull ExperienceOrb> getExperienceOrbs() {
+        return Collections.unmodifiableSet(experienceOrbs);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public @NotNull Set<@NotNull Entity> getChunkEntities(Chunk chunk) {
+        if (!ChunkUtils.isLoaded(chunk))
+            return Collections.emptySet();
+        final Set<Entity> entities;
+        synchronized (entitiesLock) {
+            if ((entities = chunkEntities.get(ChunkUtils.getChunkIndex(chunk))) == null) {
+                return Collections.emptySet();
+            }
+        }
+        return Collections.unmodifiableSet(entities);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @param point position to look at
+     * @param range max range from the given point to collect entities at
+     * @return entities that are not further than the specified distance from the transmitted position.
+     */
+    @Override
+    public @NotNull Collection<Entity> getNearbyEntities(@NotNull Point point, double range) {
+        int minX = ChunkUtils.getChunkCoordinate(point.x() - range);
+        int maxX = ChunkUtils.getChunkCoordinate(point.x() + range);
+        int minZ = ChunkUtils.getChunkCoordinate(point.z() - range);
+        int maxZ = ChunkUtils.getChunkCoordinate(point.z() + range);
+        List<Entity> result = new ArrayList<>();
+        synchronized (entitiesLock) {
+            for (int x = minX; x <= maxX; ++x) {
+                for (int z = minZ; z <= maxZ; ++z) {
+                    Chunk chunk = getChunk(x, z);
+                    if (chunk != null) {
+                        result.addAll(getChunkEntities(chunk));
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    @Override
+    public @Nullable Block getBlock(int x, int y, int z, @NotNull Condition condition) {
+        final Chunk chunk = getChunkAt(x, z);
+        Check.notNull(chunk, "The chunk at {0}:{1} is not loaded", x, z);
+        synchronized (chunk) {
+            return chunk.getBlock(x, y, z, condition);
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @param blockPosition the block position
+     * @param actionId      the action id, depends on the block
+     * @param actionParam   the action parameter, depends on the block
+     * @see <a href="https://wiki.vg/Protocol#Block_Action">BlockActionPacket</a> for the action id &amp; param
+     */
+    @Override
+    public void sendBlockAction(@NotNull Point blockPosition, byte actionId, byte actionParam) {
+        final Block block = getBlock(blockPosition);
+        final Chunk chunk = getChunkAt(blockPosition);
+        Check.notNull(chunk, "The chunk at {0} is not loaded!", blockPosition);
+        chunk.sendPacketToViewers(new BlockActionPacket(blockPosition, actionId, actionParam, block));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @param x the X position
+     * @param z the Z position
+     * @return the chunk at the given position, null if not loaded
+     */
+    @Override
+    public @Nullable Chunk getChunkAt(double x, double z) {
+        return getChunk(ChunkUtils.getChunkCoordinate(x), ChunkUtils.getChunkCoordinate(z));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @param point the chunk position
+     * @return the chunk at the given position, null if not loaded
+     */
+    @Override
+    public @Nullable Chunk getChunkAt(@NotNull Point point) {
+        return getChunkAt(point.x(), point.z());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return the instance unique id
+     */
+    @Override
+    public @NotNull UUID getUniqueId() {
+        return uniqueId;
+    }
+
+    // UNSAFE METHODS (need most of the time to be synchronized)
+
+    /**
+     * {@inheritDoc}
+     *
+     * @param entity the entity to add
+     */
+    @ApiStatus.Internal
+    @Override
+    public void UNSAFE_addEntity(@NotNull Entity entity) {
+        final Instance lastInstance = entity.getInstance();
+        if (lastInstance != null && lastInstance != this) {
+            lastInstance.UNSAFE_removeEntity(entity); // If entity is in another instance, remove it from there and add it to this
+        }
+        AddEntityToInstanceEvent event = new AddEntityToInstanceEvent(this, entity);
+        EventDispatcher.callCancellable(event, () -> {
+            final Pos entityPosition = entity.getPosition();
+            final boolean isPlayer = entity instanceof Player;
+
+            if (isPlayer) {
+                final Player player = (Player) entity;
+                getWorldBorder().init(player);
+                player.getPlayerConnection().sendPacket(createTimePacket());
+            }
+
+            // Send all visible entities
+            EntityUtils.forEachRange(this, entityPosition, MinecraftServer.getEntityViewDistance(), ent -> {
+                if (isPlayer) {
+                    if (ent.isAutoViewable())
+                        ent.addViewer((Player) entity);
+                }
+
+                if (ent instanceof Player) {
+                    if (entity.isAutoViewable())
+                        entity.addViewer((Player) ent);
+                }
+            });
+
+            // Load the chunk if not already (or throw an error if auto chunk load is disabled)
+            loadOptionalChunk(entityPosition).thenAccept(chunk -> {
+                Check.notNull(chunk, "You tried to spawn an entity in an unloaded chunk, {0}", entityPosition);
+                UNSAFE_addEntityToChunk(entity, chunk);
+            });
+        });
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @param entity the entity to remove
+     */
+    @ApiStatus.Internal
+    @Override
+    public void UNSAFE_removeEntity(@NotNull Entity entity) {
+        if (entity.getInstance() != this) return;
+        RemoveEntityFromInstanceEvent event = new RemoveEntityFromInstanceEvent(this, entity);
+        EventDispatcher.callCancellable(event, () -> {
+            // Remove this entity from players viewable list and send delete entities packet
+            entity.getViewers().forEach(entity::removeViewer);
+
+            // Remove the entity from cache
+            final Chunk chunk = getChunkAt(entity.getPosition());
+            Check.notNull(chunk, "Tried to interact with an unloaded chunk.");
+            UNSAFE_removeEntityFromChunk(entity, chunk);
+        });
+    }
+
+    /**
+     * Changes an entity chunk.
+     *
+     * @param entity    the entity to change its chunk
+     * @param lastChunk the last entity chunk
+     * @param newChunk  the new entity chunk
+     */
+    @ApiStatus.Internal
+    @Override
+    public synchronized void UNSAFE_switchEntityChunk(@NotNull Entity entity, @NotNull Chunk lastChunk, @NotNull Chunk newChunk) {
+        Check.notNull(newChunk, "The chunk {0} is not loaded, you can make it automatic by using Instance#enableAutoChunkLoad(true)", newChunk);
+        Check.argCondition(!newChunk.isLoaded(), "Chunk {0} has been unloaded previously", newChunk);
+        final long oldIndex = ChunkUtils.getChunkIndex(lastChunk);
+        final long newIndex = ChunkUtils.getChunkIndex(newChunk);
+        synchronized (entitiesLock) {
+            removeEntityChunk(oldIndex, entity);
+            addEntityChunk(newIndex, entity);
+        }
+    }
+
+    private void UNSAFE_addEntityToChunk(@NotNull Entity entity, @NotNull Chunk chunk) {
+        final long chunkIndex = ChunkUtils.getChunkIndex(chunk);
+        synchronized (entitiesLock) {
+            addEntityChunk(chunkIndex, entity);
+            this.entities.add(entity);
+            if (entity instanceof Player) {
+                this.players.add((Player) entity);
+            } else if (entity instanceof EntityCreature) {
+                this.creatures.add((EntityCreature) entity);
+            } else if (entity instanceof ExperienceOrb) {
+                this.experienceOrbs.add((ExperienceOrb) entity);
+            }
+        }
+    }
+
+    private void UNSAFE_removeEntityFromChunk(@NotNull Entity entity, @NotNull Chunk chunk) {
+        final long chunkIndex = ChunkUtils.getChunkIndex(chunk);
+        synchronized (entitiesLock) {
+            removeEntityChunk(chunkIndex, entity);
+            this.entities.remove(entity);
+            if (entity instanceof Player) {
+                this.players.remove(entity);
+            } else if (entity instanceof EntityCreature) {
+                this.creatures.remove(entity);
+            } else if (entity instanceof ExperienceOrb) {
+                this.experienceOrbs.remove(entity);
+            }
+        }
+    }
+
+    private void addEntityChunk(long index, Entity entity) {
+        this.chunkEntities.computeIfAbsent(index, i -> ConcurrentHashMap.newKeySet()).add(entity);
+    }
+
+    private void removeEntityChunk(long index, Entity entity) {
+        var chunkEntities = this.chunkEntities.get(index);
+        if (chunkEntities != null) {
+            chunkEntities.remove(entity);
+            if (chunkEntities.isEmpty()) {
+                this.chunkEntities.remove(index);
+            }
+        }
+    }
+
+    /**
+     * Performs a single tick in the instance, including scheduled tasks from {@link #scheduleNextTick(Consumer)}.
+     * <p>
+     * Warning: this does not update chunks and entities.
+     *
+     * @param time the tick time in milliseconds
+     */
+    @Override
+    public void tick(long time) {
+        // Scheduled tasks
+        if (!nextTick.isEmpty()) {
+            Consumer<Instance> callback;
+            while ((callback = nextTick.poll()) != null) {
+                callback.accept(this);
+            }
+        }
+        // Time
+        {
+            this.worldAge++;
+            this.time += timeRate;
+            // time needs to be sent to players
+            if (timeUpdate != null && !Cooldown.hasCooldown(time, lastTimeUpdate, timeUpdate)) {
+                PacketUtils.sendGroupedPacket(getPlayers(), createTimePacket());
+                this.lastTimeUpdate = time;
+            }
+
+        }
+        // Tick event
+        {
+            // Process tick events
+            GlobalHandles.INSTANCE_TICK.call(new InstanceTickEvent(this, time, lastTickAge));
+            // Set last tick age
+            this.lastTickAge = time;
+        }
+        this.worldBorder.update();
+    }
+
+    @Override
+    public <T> @Nullable T getTag(@NotNull Tag<T> tag) {
+        synchronized (nbtLock) {
+            return tag.read(nbt);
+        }
+    }
+
+    @Override
+    public <T> void setTag(@NotNull Tag<T> tag, @Nullable T value) {
+        synchronized (nbtLock) {
+            tag.write(nbt, value);
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @param centerX        center X of the explosion
+     * @param centerY        center Y of the explosion
+     * @param centerZ        center Z of the explosion
+     * @param strength       the strength of the explosion
+     * @param additionalData data to pass to the explosion supplier
+     * @throws IllegalStateException If no {@link ExplosionSupplier} was supplied
+     */
+    @Override
+    public void explode(float centerX, float centerY, float centerZ, float strength, @Nullable Data additionalData) {
+        final ExplosionSupplier explosionSupplier = getExplosionSupplier();
+        Check.stateCondition(explosionSupplier == null, "Tried to create an explosion with no explosion supplier");
+        final Explosion explosion = explosionSupplier.createExplosion(centerX, centerY, centerZ, strength, additionalData);
+        explosion.apply(this);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return the instance explosion supplier, null if none was provided
+     */
+    @Override
+    public @Nullable ExplosionSupplier getExplosionSupplier() {
+        return explosionSupplier;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @param supplier the explosion supplier
+     */
+    @Override
+    public void setExplosionSupplier(@Nullable ExplosionSupplier supplier) {
+        this.explosionSupplier = supplier;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return the instance space
+     */
+    @ApiStatus.Internal
+    @Override
+    public @NotNull PFInstanceSpace getInstanceSpace() {
+        return instanceSpace;
+    }
+
+    @Override
+    public @NotNull Pointers pointers() {
+        return this.pointers;
+    }
+}

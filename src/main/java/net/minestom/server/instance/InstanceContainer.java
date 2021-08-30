@@ -40,7 +40,7 @@ import java.util.function.Supplier;
 /**
  * InstanceContainer is an instance that contains chunks in contrary to SharedInstance.
  */
-public class InstanceContainer extends Instance {
+public class InstanceContainer extends AbstractInstance {
 
     // the shared instances assigned to this instance
     private final List<SharedInstance> sharedInstances = new CopyOnWriteArrayList<>();

@@ -14,7 +14,7 @@ import java.util.concurrent.CompletableFuture;
  * The {@link SharedInstance} is an instance that shares the same chunks as its linked {@link InstanceContainer},
  * entities are separated.
  */
-public class SharedInstance extends Instance {
+public class SharedInstance extends AbstractInstance {
     private final InstanceContainer instanceContainer;
 
     public SharedInstance(@NotNull UUID uniqueId, @NotNull InstanceContainer instanceContainer) {
