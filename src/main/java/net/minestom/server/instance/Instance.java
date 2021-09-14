@@ -682,11 +682,11 @@ public abstract class Instance implements BlockGetter, BlockSetter, Tickable, Ta
         }
     }
 
-    private void addEntityChunk(long index, Entity entity) {
+    protected void addEntityChunk(long index, Entity entity) {
         this.chunkEntities.computeIfAbsent(index, i -> ConcurrentHashMap.newKeySet()).add(entity);
     }
 
-    private void removeEntityChunk(long index, Entity entity) {
+    protected void removeEntityChunk(long index, Entity entity) {
         var chunkEntities = this.chunkEntities.get(index);
         if (chunkEntities != null) {
             chunkEntities.remove(entity);
