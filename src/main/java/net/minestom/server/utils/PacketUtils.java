@@ -154,6 +154,12 @@ public final class PacketUtils {
             player.sendPacketToViewers(serverPacket);
             return;
         }
+        if (MinecraftServer.hasViewableOptimization()) {
+            //TODO if `player != null`, we need to avoid sending to the player here
+            viewable.sendPacketToViewers(serverPacket);
+            return;
+        }
+
         ViewableStorage viewableStorage;
         synchronized (VIEWABLE_PACKET_LOCK) {
             viewableStorage = VIEWABLE_STORAGE_MAP.computeIfAbsent(viewable, ViewableStorage::new);

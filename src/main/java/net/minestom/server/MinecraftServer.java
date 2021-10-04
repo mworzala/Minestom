@@ -39,6 +39,7 @@ import net.minestom.server.utils.validate.Check;
 import net.minestom.server.world.Difficulty;
 import net.minestom.server.world.DimensionTypeManager;
 import net.minestom.server.world.biomes.BiomeManager;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
@@ -124,6 +125,7 @@ public final class MinecraftServer {
     private static int entityViewDistance = 5;
     private static int compressionThreshold = 256;
     private static boolean groupedPacket = true;
+    private static boolean viewableOptimization = true;
     private static boolean terminalEnabled = System.getProperty("minestom.terminal.disabled") == null;
     private static ResponseDataConsumer responseDataConsumer;
     private static String brandName = "Minestom";
@@ -539,6 +541,32 @@ public final class MinecraftServer {
     public static void setGroupedPacket(boolean groupedPacket) {
         Check.stateCondition(started, "You cannot change the grouped packet value after the server has been started.");
         MinecraftServer.groupedPacket = groupedPacket;
+    }
+
+    /**
+     * Gets if the viewable packet grouping optimization is enabled.
+     *
+     * It is enabled by default and it is our recommendation, you should only disable it
+     * if you need direct access to outgoing packets. Disabling the feature will result
+     * in a performance decrease.
+     *
+     * @return true if the viewable optimization feature is enabled, false otherwise
+     */
+    @ApiStatus.Experimental
+    public static boolean hasViewableOptimization() {
+        return viewableOptimization;
+    }
+
+    /**
+     * Enables or disables viewable optimization
+     *
+     * @param viewableOptimization true to enable viewable optimization
+     * @throws IllegalStateException if this is called after the server started
+     * @see #hasViewableOptimization()
+     */
+    public static void setViewableOptimization(boolean viewableOptimization) {
+        Check.stateCondition(started, "You cannot change the viewable optimization value after the server has been started.");
+        MinecraftServer.viewableOptimization = viewableOptimization;
     }
 
     /**
