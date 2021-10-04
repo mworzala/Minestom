@@ -564,6 +564,7 @@ public final class MinecraftServer {
      * @throws IllegalStateException if this is called after the server started
      * @see #hasViewableOptimization()
      */
+    @ApiStatus.Experimental
     public static void setViewableOptimization(boolean viewableOptimization) {
         Check.stateCondition(started, "You cannot change the viewable optimization value after the server has been started.");
         MinecraftServer.viewableOptimization = viewableOptimization;

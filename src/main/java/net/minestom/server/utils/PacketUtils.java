@@ -155,8 +155,11 @@ public final class PacketUtils {
             return;
         }
         if (MinecraftServer.hasViewableOptimization()) {
-            //TODO if `player != null`, we need to avoid sending to the player here
-            viewable.sendPacketToViewers(serverPacket);
+            if (player != null) {
+                player.sendPacketToViewers(serverPacket);
+            } else {
+                viewable.sendPacketToViewers(serverPacket);
+            }
             return;
         }
 
