@@ -157,6 +157,10 @@ public final class PacketUtils {
             entity.sendPacketToViewers(serverPacket);
             return;
         }
+        if (true) {
+            Objects.requireNonNullElse(entity, viewable).sendPacketToViewers(serverPacket);
+            return;
+        }
         final Player exception = entity instanceof Player ? (Player) entity : null;
         VIEWABLE_STORAGE_MAP.compute(viewable, (v, storage) -> {
             if (storage == null) storage = new ViewableStorage();
