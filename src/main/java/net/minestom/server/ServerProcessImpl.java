@@ -369,20 +369,26 @@ final class ServerProcessImpl implements ServerProcess {
             final long msTime = System.currentTimeMillis();
 
             scheduler().processTick();
+            LOGGER.info("end scheduler start tick");
 
             // Connection tick (let waiting clients in, send keep alives, handle configuration players packets)
             connection().tick(msTime);
+            LOGGER.info("end connection tick");
 
             // Server tick (chunks/entities)
             serverTick(msTime);
+            LOGGER.info("end server tick");
 
             scheduler().processTickEnd();
+            LOGGER.info("end scheduler end tick");
 
             // Flush all waiting packets
             PacketUtils.flush();
+            LOGGER.info("end packet tick");
 
             // Server connection tick
             server().tick();
+            LOGGER.info("end connection tick");
 
             // Monitoring
             {
@@ -402,12 +408,15 @@ final class ServerProcessImpl implements ServerProcess {
                     exception().handleException(e);
                 }
             }
+            LOGGER.info("end instance group tick");
             // Tick all chunks (and entities inside)
             dispatcher().updateAndAwait(tickStart);
+            LOGGER.info("end chunk/entity group tick");
 
             // Clear removed entities & update threads
             final long tickTime = System.currentTimeMillis() - tickStart;
             dispatcher().refreshThreads(tickTime);
+            LOGGER.info("end thread refresh");
         }
     }
 }
