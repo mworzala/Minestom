@@ -51,9 +51,11 @@ public final class TickThread extends MinestomThread {
             this.lock.lock();
             try {
                 tick();
-            } catch (Exception e) {
+            } catch (Throwable e) {
+                System.out.println("doubly sure about exception: " + e.getClass() + " " + e.getMessage());
                 MinecraftServer.getExceptionManager().handleException(e);
             }
+            System.out.println("finished tick in run()");
             this.lock.unlock();
             // #acquire() callbacks
             this.latch.countDown();
@@ -64,11 +66,13 @@ public final class TickThread extends MinestomThread {
     private void tick() {
         final ReentrantLock lock = this.lock;
         final long tickTime = this.tickTime;
+        System.out.println("thread about to tick partitions: " + entries.size());
         for (ThreadDispatcher.Partition entry : entries) {
             assert entry.thread() == this;
             final List<Tickable> elements = entry.elements();
             if (elements.isEmpty()) continue;
             for (Tickable element : elements) {
+                System.out.println("about to tick element: " + element);
                 if (lock.hasQueuedThreads()) {
                     lock.unlock();
                     // #acquire() callbacks should be called here
@@ -77,6 +81,7 @@ public final class TickThread extends MinestomThread {
                 try {
                     element.tick(tickTime);
                 } catch (Throwable e) {
+                    System.out.println("doubly sure about exception number 2: " + e.getClass() + " " + e.getMessage());
                     MinecraftServer.getExceptionManager().handleException(e);
                 }
             }
