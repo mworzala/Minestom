@@ -61,6 +61,8 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.UnknownNullability;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.temporal.TemporalUnit;
@@ -81,6 +83,7 @@ import java.util.function.UnaryOperator;
 public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, EventHandler<EntityEvent>, Taggable,
         PermissionHandler, HoverEventSource<ShowEntity>, Sound.Emitter, Shape, AcquirableSource<Entity> {
     private static final AtomicInteger LAST_ENTITY_ID = new AtomicInteger();
+    private static final Logger logger = LoggerFactory.getLogger(Entity.class);
 
     // Certain entities should only have their position packets sent during synchronization
     private static final Set<EntityType> SYNCHRONIZE_ONLY_ENTITIES = Set.of(EntityType.ITEM, EntityType.FALLING_BLOCK,
@@ -537,37 +540,50 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
      */
     @Override
     public void tick(long time) {
-        if (instance == null || isRemoved() || !ChunkUtils.isLoaded(currentChunk))
+        logger.info("{} start entity tick", this);
+        if (instance == null || isRemoved() || !ChunkUtils.isLoaded(currentChunk)) {
+            logger.info("{} removed & exit", this);
             return;
+        }
 
         // scheduled tasks
         this.scheduler.processTick();
-        if (isRemoved()) return;
+        if (isRemoved()) {
+            logger.info("{} removed", this);
+            return;
+        }
 
         // Entity tick
         {
             // handle position and velocity updates
             movementTick();
+            logger.info("{} movement end", this);
 
             // handle block contacts
             touchTick();
+            logger.info("{} touch end", this);
 
             // Call the abstract update method
             update(time);
+            logger.info("{} update end", this);
 
             ticks++;
             EventDispatcher.call(new EntityTickEvent(this));
+            logger.info("{} event end", this);
 
             // remove expired effects
             effectTick();
+            logger.info("{} effect end", this);
         }
         // Scheduled synchronization
         if (vehicle == null && ticks >= nextSynchronizationTick) {
             synchronizePosition();
             sendPacketToViewers(getVelocityPacket());
+            logger.info("{} position sync", this);
         }
         // End of tick scheduled tasks
         this.scheduler.processTickEnd();
+        logger.info("{} done", this);
     }
 
     @ApiStatus.Internal

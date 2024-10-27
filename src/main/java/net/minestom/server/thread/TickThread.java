@@ -3,10 +3,13 @@ package net.minestom.server.thread;
 import net.minestom.server.MinecraftServer;
 import net.minestom.server.Tickable;
 import net.minestom.server.entity.Entity;
+import net.minestom.server.entity.Player;
 import net.minestom.server.instance.Chunk;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -22,6 +25,7 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 @ApiStatus.Internal
 public final class TickThread extends MinestomThread {
+    private static final Logger logger = LoggerFactory.getLogger(TickThread.class);
     private final ReentrantLock lock = new ReentrantLock();
     private volatile boolean stop;
 
@@ -52,10 +56,8 @@ public final class TickThread extends MinestomThread {
             try {
                 tick();
             } catch (Throwable e) {
-                System.out.println("doubly sure about exception: " + e.getClass() + " " + e.getMessage());
                 MinecraftServer.getExceptionManager().handleException(e);
             }
-            System.out.println("finished tick in run()");
             this.lock.unlock();
             // #acquire() callbacks
             this.latch.countDown();
@@ -66,24 +68,26 @@ public final class TickThread extends MinestomThread {
     private void tick() {
         final ReentrantLock lock = this.lock;
         final long tickTime = this.tickTime;
-        System.out.println("thread about to tick partitions: " + entries.size());
+        logger.info("thread about to tick partitions: {}", entries.size());
         for (ThreadDispatcher.Partition entry : entries) {
             assert entry.thread() == this;
             final List<Tickable> elements = entry.elements();
             if (elements.isEmpty()) continue;
             for (Tickable element : elements) {
-                System.out.println("about to tick element: " + element);
+                boolean isPlayer = element instanceof Player;
+                if (isPlayer) logger.info("about to tick element: {}", element);
                 if (lock.hasQueuedThreads()) {
                     lock.unlock();
                     // #acquire() callbacks should be called here
                     lock.lock();
                 }
+                if (isPlayer) logger.info("REALLY about to tick element: {}", element);
                 try {
                     element.tick(tickTime);
                 } catch (Throwable e) {
-                    System.out.println("doubly sure about exception number 2: " + e.getClass() + " " + e.getMessage());
                     MinecraftServer.getExceptionManager().handleException(e);
                 }
+                if (isPlayer) logger.info("FINISHED ticking element: {}", element);
             }
         }
     }

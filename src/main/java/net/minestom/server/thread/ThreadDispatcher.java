@@ -106,7 +106,6 @@ public final class ThreadDispatcher<P> {
     public synchronized void updateAndAwait(long time) {
         // Update dispatcher
         this.updates.drain(update -> {
-            System.out.println("begin update: " + (update == null ? "null" : update.getClass().getSimpleName()));
             switch (update) {
                 case DispatchUpdate.PartitionLoad<P> chunkUpdate -> processLoadedPartition(chunkUpdate.partition());
                 case DispatchUpdate.PartitionUnload<P> partitionUnload ->
@@ -120,16 +119,13 @@ public final class ThreadDispatcher<P> {
             }
         });
         // Tick all partitions
-        System.out.println("finished updates");
         CountDownLatch latch = new CountDownLatch(threads.size());
         for (TickThread thread : threads) thread.startTick(latch, time);
         try {
             latch.await();
         } catch (InterruptedException e) {
-            System.out.println("latch interrupted");
             throw new RuntimeException(e);
         }
-        System.out.println("latch awaited");
     }
 
     /**
