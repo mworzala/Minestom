@@ -68,26 +68,21 @@ public final class TickThread extends MinestomThread {
     private void tick() {
         final ReentrantLock lock = this.lock;
         final long tickTime = this.tickTime;
-        logger.info("thread about to tick partitions: {}", entries.size());
         for (ThreadDispatcher.Partition entry : entries) {
             assert entry.thread() == this;
             final List<Tickable> elements = entry.elements();
             if (elements.isEmpty()) continue;
             for (Tickable element : elements) {
-                boolean isPlayer = element instanceof Player;
-                if (isPlayer) logger.info("about to tick element: {}", element);
                 if (lock.hasQueuedThreads()) {
                     lock.unlock();
                     // #acquire() callbacks should be called here
                     lock.lock();
                 }
-                if (isPlayer) logger.info("REALLY about to tick element: {}", element);
                 try {
                     element.tick(tickTime);
                 } catch (Throwable e) {
                     MinecraftServer.getExceptionManager().handleException(e);
                 }
-                if (isPlayer) logger.info("FINISHED ticking element: {}", element);
             }
         }
     }

@@ -540,50 +540,43 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
      */
     @Override
     public void tick(long time) {
-        logger.info("{} start entity tick", this);
         if (instance == null || isRemoved() || !ChunkUtils.isLoaded(currentChunk)) {
-            logger.info("{} removed & exit", this);
             return;
         }
 
         // scheduled tasks
+        logger.info("{} start scheduler tick", this);
         this.scheduler.processTick();
         if (isRemoved()) {
             logger.info("{} removed", this);
             return;
         }
+        logger.info("{} end scheduler tick", this);
 
         // Entity tick
         {
             // handle position and velocity updates
             movementTick();
-            logger.info("{} movement end", this);
 
             // handle block contacts
             touchTick();
-            logger.info("{} touch end", this);
 
             // Call the abstract update method
             update(time);
-            logger.info("{} update end", this);
 
             ticks++;
             EventDispatcher.call(new EntityTickEvent(this));
-            logger.info("{} event end", this);
 
             // remove expired effects
             effectTick();
-            logger.info("{} effect end", this);
         }
         // Scheduled synchronization
         if (vehicle == null && ticks >= nextSynchronizationTick) {
             synchronizePosition();
             sendPacketToViewers(getVelocityPacket());
-            logger.info("{} position sync", this);
         }
         // End of tick scheduled tasks
         this.scheduler.processTickEnd();
-        logger.info("{} done", this);
     }
 
     @ApiStatus.Internal
@@ -831,9 +824,13 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
     }
 
     private void removeFromInstance(Instance instance) {
+        if (this instanceof Player p) logger.info("{} begin remove from instance", p.getUsername());
         EventDispatcher.call(new RemoveEntityFromInstanceEvent(instance, this));
+        if (this instanceof Player p) logger.info("{} event done from instance", p.getUsername());
         instance.getEntityTracker().unregister(this, trackingTarget, trackingUpdate);
+        if (this instanceof Player p) logger.info("{} unregistered from entity tracker", p.getUsername());
         this.viewEngine.forManuals(this::removeViewer);
+        if (this instanceof Player p) logger.info("{} manual viewers removed", p.getUsername());
     }
 
     /**
@@ -1456,6 +1453,7 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
     }
 
     protected void remove(boolean permanent) {
+        if (this instanceof Player p) logger.info("{} begin entity remove", p.getUsername());
         if (isRemoved()) return;
         EventDispatcher.call(new EntityDespawnEvent(this));
         try {
@@ -1463,17 +1461,22 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
         } catch (Throwable t) {
             MinecraftServer.getExceptionManager().handleException(t);
         }
+        if (this instanceof Player p) logger.info("{} entity despawned", p.getUsername());
 
         // Remove passengers if any (also done with LivingEntity#kill)
         Set<Entity> passengers = getPassengers();
         if (!passengers.isEmpty()) passengers.forEach(this::removePassenger);
+        if (this instanceof Player p) logger.info("{} entity passengers removed", p.getUsername());
         final Entity vehicle = this.vehicle;
         if (vehicle != null) vehicle.removePassenger(this);
+        if (this instanceof Player p) logger.info("{} entity vehicle removed", p.getUsername());
 
         Set<Entity> leashedEntities = getLeashedEntities();
         leashedEntities.forEach(entity -> entity.setLeashHolder(null));
+        if (this instanceof Player p) logger.info("{} entity leashes removed", p.getUsername());
 
         MinecraftServer.process().dispatcher().removeElement(this);
+        if (this instanceof Player p) logger.info("{} entity dispatcher unticked", p.getUsername());
         this.removed = true;
         if (!permanent) {
             // Reset some state to be ready for re-use
@@ -1484,6 +1487,7 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
         Instance currentInstance = this.instance;
         if (currentInstance != null) {
             removeFromInstance(currentInstance);
+            if (this instanceof Player p) logger.info("{} entity removed from instance", p.getUsername());
             this.instance = null;
         }
     }

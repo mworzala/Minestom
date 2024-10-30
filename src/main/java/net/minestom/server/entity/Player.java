@@ -578,18 +578,23 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
 
     @Override
     public void remove(boolean permanent) {
+        logger.info("{} begin remove", getUsername());
         if (isRemoved()) return;
 
         if (permanent) {
             this.packets.clear();
             EventDispatcher.call(new PlayerDisconnectEvent(this));
         }
+        logger.info("{} finished event", getUsername());
 
         super.remove(permanent);
+        logger.info("{} finished entity remove", getUsername());
 
         final Inventory currentInventory = getOpenInventory();
         if (currentInventory != null) currentInventory.removeViewer(this);
+        logger.info("{} inventory cleanup", getUsername());
         MinecraftServer.getBossBarManager().removeAllBossBars(this);
+        logger.info("{} bossbar cleanup", getUsername());
         // Advancement tabs cache
         {
             Set<AdvancementTab> advancementTabs = AdvancementTab.getTabs(this);
@@ -599,17 +604,21 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
                 }
             }
         }
+        logger.info("{} advancement tab cleanup", getUsername());
         final Pos position = this.position;
         final int chunkX = position.chunkX();
         final int chunkZ = position.chunkZ();
         // Clear all viewable chunks
         ChunkUtils.forChunksInRange(chunkX, chunkZ, settings.getEffectiveViewDistance(), chunkRemover);
+        logger.info("{} chunk stuff", getUsername());
         // Remove from the tab-list
         PacketUtils.broadcastPlayPacket(getRemovePlayerToList());
+        logger.info("{} remove from tablist", getUsername());
 
         // Prevent the player from being stuck in loading screen, or just unable to interact with the server
         // This should be considered as a bug, since the player will ultimately time out anyway.
         if (permanent && playerConnection.isOnline()) kick(REMOVE_MESSAGE);
+        logger.info("{} connection kick & finished", getUsername());
     }
 
     @Override
@@ -1669,6 +1678,7 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
      * @param component the reason
      */
     public void kick(@NotNull Component component) {
+        logger.info("{} begin kick", getUsername());
         // Packet type depends on the current player connection state
         final ServerPacket disconnectPacket;
         if (playerConnection.getConnectionState() == ConnectionState.LOGIN) {
@@ -1677,7 +1687,9 @@ public class Player extends LivingEntity implements CommandSender, Localizable, 
             disconnectPacket = new DisconnectPacket(component);
         }
         sendPacket(disconnectPacket);
+        logger.info("{} sent packet", getUsername());
         playerConnection.disconnect();
+        logger.info("{} connection closed", getUsername());
     }
 
     /**
