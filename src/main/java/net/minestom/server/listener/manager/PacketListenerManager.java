@@ -130,7 +130,7 @@ public final class PacketListenerManager {
         // Finally execute the listener
         try {
             packetListenerConsumer.accept(packet, connection);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             // Packet is likely invalid
             MinecraftServer.getExceptionManager().handleException(e);
         }
