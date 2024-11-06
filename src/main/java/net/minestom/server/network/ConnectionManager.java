@@ -44,6 +44,7 @@ import java.util.stream.Collectors;
  */
 public final class ConnectionManager {
     private static final Component TIMEOUT_TEXT = Component.text("Timeout", NamedTextColor.RED);
+    private static final Component LOGIN_ERROR = Component.text("An error has occurred while logging in", NamedTextColor.RED);
 
     // All players once their Player object has been instantiated.
     private final Map<PlayerConnection, Player> connectionPlayerMap = new ConcurrentHashMap<>();
@@ -385,11 +386,18 @@ public final class ConnectionManager {
             // alive will never be sent and they will disconnect themselves or we will kick them for not replying.
             player.refreshAnswerKeepAlive(true);
 
-            // Spawn the player at Player#getRespawnPoint
-            CompletableFuture<Void> spawnFuture = player.UNSAFE_init();
+            try {
+                // Spawn the player at Player#getRespawnPoint
+                CompletableFuture<Void> spawnFuture = player.UNSAFE_init();
 
-            // Required to get the exact moment the player spawns
-            if (ServerFlag.INSIDE_TEST) spawnFuture.join();
+                // Required to get the exact moment the player spawns
+                if (ServerFlag.INSIDE_TEST) spawnFuture.join();
+            } catch (Throwable t) {
+                // Kick the player because they failed to spawn, but don't fail the tick completely.
+                MinecraftServer.getExceptionManager().handleException(t);
+                player.kick(LOGIN_ERROR);
+            }
+
         });
     }
 
