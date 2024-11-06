@@ -545,13 +545,13 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
         }
 
         // scheduled tasks
-        logger.info("{} start scheduler tick", this);
+        if (this instanceof Player) logger.info("{} start scheduler tick", this);
         this.scheduler.processTick();
         if (isRemoved()) {
             logger.info("{} removed", this);
             return;
         }
-        logger.info("{} end scheduler tick", this);
+        if (this instanceof Player) logger.info("{} end scheduler tick", this);
 
         // Entity tick
         {
