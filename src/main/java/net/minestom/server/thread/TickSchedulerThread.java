@@ -4,6 +4,8 @@ import net.minestom.server.MinecraftServer;
 import net.minestom.server.ServerFlag;
 import net.minestom.server.ServerProcess;
 import org.jetbrains.annotations.ApiStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @ApiStatus.Internal
 public final class TickSchedulerThread extends MinestomThread {
@@ -11,6 +13,7 @@ public final class TickSchedulerThread extends MinestomThread {
     // Windows has an issue with periodically being unable to sleep for < ~16ms at a time
     private static final long SLEEP_THRESHOLD = System.getProperty("os.name", "")
             .toLowerCase().startsWith("windows") ? 17 : 2;
+    private static final Logger log = LoggerFactory.getLogger(TickSchedulerThread.class);
 
     private final ServerProcess serverProcess;
 
@@ -33,6 +36,7 @@ public final class TickSchedulerThread extends MinestomThread {
 
             ticks++;
             long nextTickTime = baseTime + ticks * TICK_TIME_NANOS;
+            log.info("Next tick in {}ms", (nextTickTime - System.nanoTime()) / 1_000_000L);
             waitUntilNextTick(nextTickTime);
             // Check if the server can not keep up with the tickrate
             // if it gets too far behind, reset the ticks & baseTime

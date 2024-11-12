@@ -376,7 +376,9 @@ final class ServerProcessImpl implements ServerProcess {
             connection().tick(msTime);
 
             // Server tick (chunks/entities)
+            LOGGER.info("begin server tick");
             serverTick(msTime);
+            LOGGER.info("end server tick");
 
             scheduler().processTickEnd();
 

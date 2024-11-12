@@ -60,6 +60,8 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.UnknownNullability;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.temporal.TemporalUnit;
@@ -92,6 +94,7 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
             EntityType.AREA_EFFECT_CLOUD);
     private static final Set<EntityType> NO_ENTITY_COLLISION_ENTITIES = Set.of(EntityType.TEXT_DISPLAY, EntityType.ITEM_DISPLAY,
             EntityType.BLOCK_DISPLAY);
+    private static final Logger log = LoggerFactory.getLogger(Entity.class);
     private final CachedPacket destroyPacketCache = new CachedPacket(() -> new DestroyEntitiesPacket(getEntityId()));
 
     protected Instance instance;
@@ -534,7 +537,10 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
 
         // scheduled tasks
         this.scheduler.processTick();
-        if (isRemoved()) return;
+        if (isRemoved()) {
+            if (this instanceof Player p) log.info("{}, player removed", p.getUsername());
+            return;
+        }
 
         // Entity tick
         {
@@ -1434,10 +1440,13 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
     }
 
     protected void remove(boolean permanent) {
+        if (this instanceof Player p) log.info("{}, player remove method", p.getUsername());
         if (isRemoved()) return;
         EventDispatcher.call(new EntityDespawnEvent(this));
         try {
+            if (this instanceof Player p) log.info("{}, pre despawn", p.getUsername());
             despawn();
+            if (this instanceof Player p) log.info("{}, post despawn", p.getUsername());
         } catch (Throwable t) {
             MinecraftServer.getExceptionManager().handleException(t);
         }
@@ -1451,7 +1460,9 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
         Set<Entity> leashedEntities = getLeashedEntities();
         leashedEntities.forEach(entity -> entity.setLeashHolder(null));
 
+            if (this instanceof Player p) log.info("{}, pre dispatcher remove", p.getUsername());
         MinecraftServer.process().dispatcher().removeElement(this);
+            if (this instanceof Player p) log.info("{}, post dispatcher remove", p.getUsername());
         this.removed = true;
         if (!permanent) {
             // Reset some state to be ready for re-use
@@ -1461,7 +1472,9 @@ public class Entity implements Viewable, Tickable, Schedulable, Snapshotable, Ev
         }
         Instance currentInstance = this.instance;
         if (currentInstance != null) {
+            if (this instanceof Player p) log.info("{}, pre instance remove", p.getUsername());
             removeFromInstance(currentInstance);
+            if (this instanceof Player p) log.info("{}, post instance remove", p.getUsername());
             this.instance = null;
         }
     }

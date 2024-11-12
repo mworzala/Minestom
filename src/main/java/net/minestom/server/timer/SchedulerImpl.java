@@ -4,6 +4,8 @@ import it.unimi.dsi.fastutil.ints.Int2ObjectAVLTreeMap;
 import net.minestom.server.MinecraftServer;
 import org.jctools.queues.MpscUnboundedArrayQueue;
 import org.jetbrains.annotations.NotNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -21,6 +23,7 @@ final class SchedulerImpl implements Scheduler {
         thread.setDaemon(true);
         return thread;
     });
+    private static final Logger log = LoggerFactory.getLogger(SchedulerImpl.class);
 
     private final MpscUnboundedArrayQueue<TaskImpl> tasksToExecute = new MpscUnboundedArrayQueue<>(64);
     private final MpscUnboundedArrayQueue<TaskImpl> tickEndTasksToExecute = new MpscUnboundedArrayQueue<>(64);
@@ -97,7 +100,9 @@ final class SchedulerImpl implements Scheduler {
     private void handleTask(TaskImpl task) {
         TaskSchedule schedule;
         try {
+            log.info("Start task: {}", task.task());
             schedule = task.task().get();
+            log.info("End task: {}", task.task());
         } catch (Throwable t) {
             MinecraftServer.getExceptionManager().handleException(new RuntimeException("Exception in scheduled task", t));
             schedule = TaskSchedule.stop();
